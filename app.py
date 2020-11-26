@@ -31,12 +31,10 @@ Station = Base.classes.station
 #################################################
 # Flask Setup
 #################################################
-
-#Flask setup
 app = Flask(__name__)
 
 #################################################
-# Methods 
+# Methods to perform some operations
 #################################################
 """
 Method to get earliest & last dates 
@@ -44,28 +42,37 @@ Method to get earliest & last dates
 def get_early_last_date():
     # Create our session (link) from Python to the DB
     session = Session(engine)
-    #dates = []
+
+    # Query earliest & last date from Measurement data set
     earliest_date = session.query(Measurement.date).order_by(Measurement.date).first()
     last_date = session.query(Measurement.date).order_by(Measurement.date.desc()).first()
+
+    # return those dates
     return(earliest_date[0], last_date[0])
 
 """
 Method to validate if input value is valid date string
+Function requires a parameter when calling a function to validate is passed string is valid date format
+
 """
 def validate(date_text):
+    # Variable which will hold boolean value to return depending on validation
     flag = 0
     try:
+        #Validating if provided date_text is in valid date format
         dt.datetime.strptime(date_text, '%Y-%m-%d')
     except ValueError:
+        # Set the flag value to 1 if parameter passed is not in valid date format
         flag = 1
     finally:
+        # Return flag value 
         return flag
 
 """
 Below method is created to handle sessions & run query.
 Calling this method, will create a session , run query for appropriate route, close session & return query result.
 Arguments:
-route - Name of Route 
+route - Name to identify Route 
 date1 - Start Date if needs to filter a query on start_date
 date2 - End Date if needs to filter a query on end_date
 """
@@ -74,16 +81,21 @@ def run_query(route, date1=None, date2=None):
     session = Session(engine)
 
     # Check for route and run query
-    if route == 'Percipitation':
+    ## ROUTE ==> /api/v1.0/precipitation
+    if route == 'Precipitation':
+        # Query to get date & precipitation score
         sel = [Measurement.date, Measurement.prcp]
         result = session.query(*sel).all()  
 
+    ## ROUTE ==> /api/v1.0/stations
     elif route == 'Stations':
+        # Query to get details of stations
         sel = [Station.station, Station.name, Station.latitude, Station.longitude, Station.elevation]
         result = session.query(*sel).all()
 
+    ## ROUTE ==> /api/v1.0/tobs
     elif route == 'tobs':
-        #Get the last date
+        #Get the last date (function would return both earliest & last date, will work on last date only)
         start_last_date = get_early_last_date()
 
         #retrive date, month & year for last_date
@@ -95,20 +107,25 @@ def run_query(route, date1=None, date2=None):
         # Calculate the date 1 year ago from the last data point in the database
         date_year_back = dt.date(year, month, day) - dt.timedelta(days=365)
 
+        # Query to get the most vactive station
         sel = [Measurement.station, Station.name, func.count(Measurement.station)]
         active_station = session.query(*sel).filter(Measurement.station == Station.station).\
                   group_by(Measurement.station).order_by(func.count(Measurement.station).desc()).first()
         
-        # Perform a query to retrieve the date and temperature observation
+        # Perform a query to retrieve the date and temperature observation for most active station for last one year
         sel = [Measurement.date, Measurement.tobs]
         result = session.query(*sel).filter(Measurement.date >= date_year_back).\
                     filter(Measurement.station == active_station[0]).all()
 
+    ## ROUTE ==> /api/v1.0/<start>
     elif route == 'start':
+        # Query to retrive Min, Max & Avg temperature observation for all dates greater than and equal to the start date provided
         sel=[func.min(Measurement.tobs), func.max(Measurement.tobs), func.avg(Measurement.tobs)]
         result = session.query(*sel).filter(Measurement.date >= date1).all()
 
+    ## ROUTE ==> /api/v1.0/<start>/<end>
     elif route == 'range':
+        # Query to retrive Min, Max & Avg temperature observation for all dates in the range of start & end date provided, both inclusive
         sel=[func.min(Measurement.tobs), func.max(Measurement.tobs), func.avg(Measurement.tobs)]
         result = session.query(*sel).filter(Measurement.date >= date1).\
                 filter(Measurement.date <= date2).all()
@@ -125,7 +142,7 @@ def run_query(route, date1=None, date2=None):
 #################################################
 
 """
-Error handlinfg : If incorrect route has provided
+Error handling : If incorrect route has provided
 """
 @app.errorhandler(404)
 def resource_not_found(e):
@@ -144,7 +161,7 @@ def home():
         f"/api/v1.0/precipitation ====> Perceipitation Data<br/>"
         f"/api/v1.0/stations ====> List of Stations<br/>"
         f"/api/v1.0/tobs ====> temperature observations (TOBS) for the previous year<br/>"
-        f"/api/v1.0/yyyy-mm-dd ====> Min, Max & Avg temperature for given start date<br/>"
+        f"/api/v1.0/yyyy-mm-dd ====> Min, Max & Avg temperature for all dates greater than or equal to given start date<br/>"
         f"/api/v1.0/yyyy-mm-dd/yyyy-mm-dd ====> Min, Max & Avg temperature for given start and end date range<br/>"
     )
 
@@ -156,17 +173,17 @@ Defining a route which will display date & percipitation score
 def perc_data():
 
     # Call run_query function    
-    prcp_data = run_query('Percipitation')
+    prcp_data = run_query('Precipitation')
 
     # Create an empty list to store percipitation data
     prcp_dta_list = []
 
     # Iterate through prcp_date
     for date, percp in prcp_data:
-        # Define an empty dict & store date & percipitation score from each record in that
+        # Define an empty dict & store date & precipitation score from each record in that
         prcp_data_dict = {}
         prcp_data_dict["Date"] = date
-        prcp_data_dict["Percipitation"] = percp
+        prcp_data_dict["Precipitation"] = percp
 
         # append dict to list
         prcp_dta_list.append(prcp_data_dict)
@@ -233,14 +250,16 @@ Defining a route which will provide min, max & average temperature for all dates
 """
 @app.route("/api/v1.0/<startdate>")
 def temp_start(startdate):
-    
+
+    # Call validate function with the startdate as parameter to validate if date is in correct format
     val = validate(startdate)
     if val == 1:
-        return("Incorrect url provided OR if date is provided then its an incorrect date format, should be YYYY-MM-DD")
+        return({"ERROR" : "Incorrect url provided OR if date is provided then its an incorrect date format, should be YYYY-MM-DD"})
 
     # Get the earliest & latest date from dataset
     start_last_date = get_early_last_date()
     
+    # Run the querries if date provided is in range of earliest & last date from dataset
     if startdate >= start_last_date[0] and startdate <= start_last_date[1]:
 
         # Call run_query function
@@ -253,8 +272,9 @@ def temp_start(startdate):
             f"Max Temp -- {results[0][1]}</br>"
             f"Average Temp -- {round(results[0][2],2)}</br>"
             )
+    # Return Error if date is not in specified range of dataset
     else:
-        return("Date Entered is outside of data set")
+        return jsonify(ERROR="Date Entered is outside of data set")
 
 """
 Defining a route which will provide min, max & average temperature for a given start or start-end range.
@@ -262,19 +282,21 @@ Defining a route which will provide min, max & average temperature for a given s
 @app.route("/api/v1.0/<startdate>/<enddate>")
 def start_end(startdate, enddate):
 
+    # Call validate function with the startdate & enddate as parameter to validate if date is in correct forma
     val1 = validate(startdate)
     val2 = validate(enddate)
     if val1 == 1 or val2==1:
-        return("Incorrect url provided OR if date is provided then its an incorrect date format, should be YYYY-MM-DD")
+        return jsonify(ERROR="Incorrect url provided OR if date is provided then its an incorrect date format, should be YYYY-MM-DD")
 
+    # Return error if enddate is earlier than start date
     if enddate <= startdate:
-        err = f"Please enter the route as /api/v1.0/startdate/enddate and startdate should be less than enddate"   
-        return jsonify(error=err)
+        return jsonify(ERROR="Please enter the route as /api/v1.0/startdate/enddate and startdate should be less than enddate")
 
     
     # Get the earliest & latest date from dataset
     start_last_date = get_early_last_date()
     
+    # Run the querries if start & end date provided is in range of earliest & last date from dataset
     if (startdate >= start_last_date[0] and startdate <= start_last_date[1]) and (enddate >= start_last_date[0] and enddate <= start_last_date[1]):
 
         # Call run_query function
@@ -287,8 +309,9 @@ def start_end(startdate, enddate):
             f"Max Temp -- {results[0][1]}</br>"
             f"Average Temp -- {round(results[0][2],2)}</br>"
             )
+    # Return error if start & end date provided is not in range of earliest & last date from dataset
     else:
-        return jsonify(error="Date Entered is outside of data set")
+        return jsonify(ERROR="Date Entered is outside of data set")
 
 
 #run flask server
